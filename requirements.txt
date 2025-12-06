@@ -1,5 +1,6 @@
 streamlit
-google-generativeai
-Pillow
-gTTS
+google-generativeai>=0.7.2
 fpdf
+streamlit-option-menu
+plotly
+pillow
