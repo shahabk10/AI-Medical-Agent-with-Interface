@@ -62,28 +62,47 @@ except:
 
 # --- 5. FUNCTIONS ---
 
+# --- REPLACEMENT FUNCTION FOR app.py ---
+
 def get_ai_response(prompt, img_data=None):
-    # System Prompt for Professionalism
+    # System Instruction
     sys_prompt = f"""
     You are 'Dr. AI', a professional medical consultant.
     Patient: {st.session_state.user_info.get('name', 'Guest')}, Age: {st.session_state.user_info.get('age', '--')}.
-    
-    GUIDELINES:
-    1. Only answer medical/health queries.
-    2. If giving medicine, use Generic Names and add a disclaimer.
-    3. Structure: Diagnosis -> Diet -> Medicine -> Precautions.
-    4. Language: English + Roman Urdu (Easy to understand).
+    Guidelines: Answer only medical queries. Suggest Generic Medicines. 
+    Structure: Diagnosis -> Diet -> Medicine -> Precautions.
     """
     
-    try:
-        model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=sys_prompt)
-        if img_data:
-            return model.generate_content([prompt, img_data]).text
-        return model.generate_content(prompt).text
-    except Exception as e:
-        # Fallback
-        model = genai.GenerativeModel("gemini-pro")
-        return model.generate_content(f"{sys_prompt}\n\nUser: {prompt}").text
+    # Hum 3 models try karenge bari bari
+    models_to_try = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+    
+    last_error = ""
+
+    for model_name in models_to_try:
+        try:
+            # Model configure karein
+            # Note: Purane models system_instruction support nahi karte, isliye hum prompt me add kar rahe hain
+            final_prompt = f"System Instruction: {sys_prompt}\n\nUser Query: {prompt}"
+            
+            model = genai.GenerativeModel(model_name)
+            
+            if img_data:
+                # Image ke sath request
+                response = model.generate_content([final_prompt, img_data])
+            else:
+                # Text only request
+                response = model.generate_content(final_prompt)
+                
+            # Agar yahan tak pohanch gaye to return kardo
+            return response.text
+
+        except Exception as e:
+            # Agar fail hua to error save karo aur agla model try karo
+            last_error = str(e)
+            continue 
+            
+    # Agar saaray models fail ho jayen
+    return f"⚠️ Error: Unable to connect. Details: {last_error}. Please Check API Key in Secrets."
 
 def create_pdf(history):
     pdf = FPDF()
@@ -251,3 +270,4 @@ else:
             
         st.button("Save Records", use_container_width=True)
         st.success("Ye data PDF report mein shamil kiya jayega.")
+
