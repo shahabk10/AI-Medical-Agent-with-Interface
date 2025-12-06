@@ -60,14 +60,34 @@ if "history" not in st.session_state: st.session_state.history = []
 if "user_data" not in st.session_state: 
     st.session_state.user_data = {"name": "Guest User", "age": 25, "gender": "Male", "weight": 70, "height": 175}
 
+# --- REPLACEMENT FUNCTION (Paste this inside app.py) ---
+
 def get_ai_response(prompt, system_instruction):
-    try:
-        model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=system_instruction)
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception:
-        model = genai.GenerativeModel("gemini-pro")
-        return model.generate_content(f"{system_instruction}\n\nQuery: {prompt}").text
+    # Hum 3 models try karenge. Agar pehla fail hua to dusra chalega.
+    models_to_try = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
+    
+    last_error = ""
+    
+    # Try models one by one
+    for model_name in models_to_try:
+        try:
+            # Configure model
+            model = genai.GenerativeModel(model_name)
+            
+            # Note: System instruction ko prompt ke sath mila kar bhejna zyada safe hai
+            # kyunki kuch purane models system_instruction parameter support nahi karte.
+            full_prompt = f"System Instruction: {system_instruction}\n\nUser Query: {prompt}"
+            
+            response = model.generate_content(full_prompt)
+            return response.text
+            
+        except Exception as e:
+            # Agar error aya to agla model try karega
+            last_error = str(e)
+            continue 
+
+    # Agar saaray models fail ho jayen to ye message ayega
+    return f"Connection Error: Unable to connect to Google AI. Details: {last_error}. Please check your API Key permissions."
 
 def generate_professional_pdf(history, user_data):
     pdf = FPDF()
@@ -207,3 +227,4 @@ if selected == "Settings":
         if st.form_submit_button("Save"):
             st.session_state.user_data['name'] = name
             st.success("Saved!")
+
