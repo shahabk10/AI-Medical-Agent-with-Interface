@@ -1,185 +1,209 @@
 import streamlit as st
 import google.generativeai as genai
 from fpdf import FPDF
-from gtts import gTTS
 from streamlit_option_menu import option_menu
-from PIL import Image
-import io
-import datetime
 import plotly.graph_objects as go
+import datetime
 
-# --- CONFIGURATION ---
+# --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Sehat Sahulat Pro",
-    page_icon="🏥",
-    layout="wide"
+    page_title="MediCore AI - Premium Health Agent",
+    page_icon="🩺",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS ---
+# --- 2. SECURE API CONNECTION ---
+try:
+    # Agar Secrets setup nahi hain to error handle karein
+    api_key = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=api_key)
+except Exception:
+    # Fallback for first run (Instruction for User)
+    st.warning("⚠️ API Key Missing! Please add 'GEMINI_API_KEY' to Streamlit Secrets.")
+    st.stop()
+
+# --- 3. PREMIUM UI CSS (GLASSMORPHISM) ---
 st.markdown("""
 <style>
-    .stChatMessage { border-radius: 15px; border: 1px solid #e0e0e0; }
-    div.stButton > button { 
-        background-color: #FF4B4B; color: white; border-radius: 10px; width: 100%;
+    /* Background & Main Theme */
+    .stApp { background-color: #f8f9fa; }
+    
+    /* Card Styling */
+    .css-card {
+        border-radius: 20px;
+        padding: 25px;
+        background-color: white;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
+        border: 1px solid #e0e0e0;
     }
-    div.stButton > button:hover { background-color: #FF0000; color: white; }
+    
+    /* Sidebar Styling */
+    [data-testid="stSidebar"] { background-color: #001f3f; color: white; }
+    
+    /* Buttons */
+    .stButton>button {
+        border-radius: 12px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white; border: none; padding: 10px 24px; font-weight: bold;
+    }
+    .stButton>button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
+    
+    /* Input Fields */
+    .stTextInput>div>div>input { border-radius: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- SIDEBAR & SETUP ---
-with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3063/3063176.png", width=80)
-    st.title("🏥 Sehat Sahulat")
-    api_key = st.text_input("🔑 API Key:", type="password")
-    
-    st.subheader("Patient Profile")
-    p_name = st.text_input("Name", "Guest Patient")
-    p_age = st.text_input("Age", "25")
-    p_gender = st.selectbox("Gender", ["Male", "Female"])
+# --- 4. SESSION STATE ---
+if "history" not in st.session_state: st.session_state.history = []
+if "user_data" not in st.session_state: 
+    st.session_state.user_data = {"name": "Guest User", "age": 25, "gender": "Male", "weight": 70, "height": 175}
 
-# --- PDF GENERATOR FUNCTION (STRUCTURED) ---
-def create_structured_prescription(user_text, ai_response):
+def get_ai_response(prompt, system_instruction):
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=system_instruction)
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception:
+        model = genai.GenerativeModel("gemini-pro")
+        return model.generate_content(f"{system_instruction}\n\nQuery: {prompt}").text
+
+def generate_professional_pdf(history, user_data):
     pdf = FPDF()
     pdf.add_page()
-    
-    # Header
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, "SEHAT SAHULAT - MEDICAL REPORT", ln=True, align='C')
-    pdf.set_font("Arial", 'I', 10)
-    pdf.cell(0, 10, "AI Powered Medical Assistant | Date: " + datetime.datetime.now().strftime("%Y-%m-%d"), ln=True, align='C')
-    pdf.line(10, 30, 200, 30)
+    pdf.set_fill_color(36, 59, 85)
+    pdf.rect(0, 0, 210, 40, 'F')
+    pdf.set_font("Arial", 'B', 24)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 20, "MediCore AI Medical Report", 0, 1, 'C')
+    pdf.ln(20)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", '', 12)
+    pdf.multi_cell(0, 10, f"Patient: {user_data['name']} | Date: {datetime.datetime.now().strftime('%Y-%m-%d')}")
+    pdf.line(10, 60, 200, 60)
     pdf.ln(10)
-    
-    # Patient Details
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, "PATIENT DETAILS:", ln=True)
-    pdf.set_font("Arial", size=11)
-    pdf.cell(0, 8, f"Name: {p_name}  |  Age: {p_age}  |  Gender: {p_gender}", ln=True)
-    pdf.ln(5)
-    
-    # Section 1: Symptoms
-    pdf.set_fill_color(240, 240, 240)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, "1. REPORTED SYMPTOMS / QUERY:", ln=True, fill=True)
-    pdf.set_font("Arial", size=11)
-    # Sanitize and write user text
-    safe_user_text = user_text.encode('latin-1', 'replace').decode('latin-1')
-    pdf.multi_cell(0, 8, safe_user_text)
-    pdf.ln(5)
-    
-    # Section 2: AI Diagnosis & Advice
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, "2. DIAGNOSIS, DIET & MEDICINE:", ln=True, fill=True)
-    pdf.set_font("Arial", size=11)
-    # Sanitize and write AI text
-    safe_ai_text = ai_response.replace("*", "").encode('latin-1', 'replace').decode('latin-1')
-    pdf.multi_cell(0, 8, safe_ai_text)
-    pdf.ln(10)
-    
-    # Disclaimer
-    pdf.set_text_color(255, 0, 0)
-    pdf.set_font("Arial", 'B', 10)
-    pdf.cell(0, 10, "DISCLAIMER: This is an AI-generated report. Please consult a real doctor for emergencies.", ln=True, align='C')
-    
+    for role, text in history:
+        safe_text = text.encode('latin-1', 'replace').decode('latin-1')
+        prefix = "PATIENT: " if role == "user" else "DOCTOR AI: "
+        pdf.set_font("Arial", 'B', 11) if role == "assistant" else pdf.set_font("Arial", '', 11)
+        pdf.multi_cell(0, 6, prefix + safe_text)
+        pdf.ln(2)
     return pdf.output(dest="S").encode("latin-1")
 
-# --- AI MODEL FUNCTION (WITH FALLBACK) ---
-def get_response(prompt, image=None):
-    if not api_key: return "⚠️ Please enter API Key."
+# --- 5. SIDEBAR NAVIGATION ---
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/4228/4228730.png", width=80)
+    st.markdown("### MediCore AI")
     
-    genai.configure(api_key=api_key)
+    selected = option_menu(
+        menu_title=None,
+        options=["Dashboard", "AI Doctor Chat", "Medicine Info", "Lab Planner", "Settings"],
+        icons=["speedometer2", "chat-square-heart", "capsule", "clipboard-pulse", "gear"],
+        default_index=1,
+    )
     
-    sys_prompt = f"""
-    Act as a Doctor. Patient: {p_name}, {p_age} years, {p_gender}.
-    Task: Analyze the symptoms: '{prompt}'.
+    st.markdown("---")
+    if st.button("🚨 EMERGENCY SOS", type="primary"):
+        st.error("🚑 Emergency Protocol Initiated! Dialing 1122...")
+
+# --- 6. MAIN CONTENT ---
+
+# >>>> PAGE: DASHBOARD <<<<
+if selected == "Dashboard":
+    st.markdown("## 📊 Patient Dashboard")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Status", "Healthy", "Active")
+    col2.metric("BMI", f"{st.session_state.user_data['weight'] / ((st.session_state.user_data['height']/100)**2):.1f}")
+    col3.metric("Last Checkup", "Today")
     
-    Provide output in this EXACT structure:
-    1. **Possible Cause:** (Short explanation)
-    2. **Recommended Diet:** (What to eat/avoid)
-    3. **Daily Routine:** (Rest/Exercise guidelines)
-    4. **Suggested Medicines:** (Generic names only with dosage)
+    fig = go.Figure(go.Scatter(x=['W1', 'W2', 'W3', 'W4'], y=[72, 70, 71, 72], mode='lines+markers', name='Heart Rate'))
+    fig.update_layout(title="Heart Rate Trends", height=300)
+    st.plotly_chart(fig, use_container_width=True)
+
+# >>>> PAGE: AI DOCTOR CHAT <<<<
+if selected == "AI Doctor Chat":
+    st.title("🩺 Live Consultation")
+    for role, text in st.session_state.history:
+        avatar = "👨‍⚕️" if role == "assistant" else "👤"
+        with st.chat_message(role, avatar=avatar):
+            st.markdown(text)
+            
+    user_query = st.chat_input("Describe symptoms...")
+    if user_query:
+        st.session_state.history.append(("user", user_query))
+        with st.chat_message("user", avatar="👤"): st.markdown(user_query)
+        
+        with st.chat_message("assistant", avatar="👨‍⚕️"):
+            with st.spinner("Analyzing..."):
+                sys = f"You are MediCore AI. Patient: {st.session_state.user_data['name']}. Give diagnosis, remedies, diet (table), and medicine."
+                res = get_ai_response(user_query, sys)
+                st.markdown(res)
+                st.session_state.history.append(("assistant", res))
+                st.rerun()
+
+    if st.session_state.history:
+        pdf_data = generate_professional_pdf(st.session_state.history, st.session_state.user_data)
+        st.download_button("📥 Download Report", pdf_data, "Report.pdf", "application/pdf")
+
+# >>>> PAGE: MEDICINE INFO (NEW FEATURE) <<<<
+if selected == "Medicine Info":
+    st.markdown("""<div class="css-card"><h2>💊 Medicine Encyclopedia</h2>
+    <p>Enter any medicine name to get detailed composition and usage analysis.</p></div>""", unsafe_allow_html=True)
     
-    Keep it strictly medical.
-    """
+    med_name = st.text_input("Enter Medicine Name (e.g., Panadol, Augmentin, Brufen):")
     
-    # Try Flash Model first, if fails, use Pro
-    try:
-        model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=sys_prompt)
-        if image:
-            response = model.generate_content([prompt, image])
+    if st.button("Analyze Medicine"):
+        if med_name:
+            with st.spinner(f"Analyzing composition of {med_name}..."):
+                # Special Prompt for Medicine Analysis
+                med_prompt = f"""
+                Analyze the medicine: '{med_name}'.
+                Provide the output in the following STRICT format:
+                
+                ### 1. Active Ingredients & Mechanism
+                * List each active ingredient.
+                * For each ingredient, provide a 1-line simple explanation of what it does.
+                
+                ### 2. Primary Uses
+                * List the main diseases/conditions it treats.
+                
+                ### 3. Safety Check
+                * Common Side Effects.
+                * Warnings (Pregnancy, Driving, etc).
+                
+                Note: Be precise. If it's a brand name, find its generic formula.
+                """
+                
+                med_info = get_ai_response(med_prompt, "You are an expert Pharmacist.")
+                
+                # Display Result in a Card
+                st.markdown(f"""
+                <div class="css-card">
+                    <h3 style="color: #007bff;">🧬 Analysis for: {med_name}</h3>
+                    <hr>
+                    {med_info}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.caption("⚠️ Disclaimer: This information is for educational purposes. Always consult a doctor.")
         else:
-            response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        try:
-            # Fallback to older model if Flash fails
-            model = genai.GenerativeModel("gemini-pro") 
-            # Pro doesn't support system_instruction easily in old versions, so we append to prompt
-            full_prompt = sys_prompt + "\n\nUser Query: " + prompt
-            if image:
-                return "Error: Image not supported in fallback mode. Please use text."
-            response = model.generate_content(full_prompt)
-            return response.text
-        except Exception as e2:
-            return f"Error: {str(e2)}. Please check your API Key."
+            st.warning("Please enter a medicine name first.")
 
-# --- MAIN APP UI ---
-st.title("🏥 Sehat Sahulat - Intelligent Prescription System")
+# >>>> PAGE: LAB PLANNER <<<<
+if selected == "Lab Planner":
+    st.header("🔬 Lab Test Recommender")
+    sym = st.text_area("Symptoms for Lab Test:")
+    if st.button("Get Recommendations") and sym:
+        res = get_ai_response(f"Recommend lab tests for: {sym}", "You are a Pathologist.")
+        st.success("Recommended Tests:")
+        st.markdown(res)
 
-# Chat Container
-if "history" not in st.session_state:
-    st.session_state.history = []
-if "last_advice" not in st.session_state:
-    st.session_state.last_advice = None
-if "last_query" not in st.session_state:
-    st.session_state.last_query = None
-
-# Show History
-for role, text in st.session_state.history:
-    with st.chat_message(role):
-        st.markdown(text)
-
-# Input Area
-with st.container():
-    uploaded_file = st.file_uploader("Upload Report/Image (Optional)", type=["jpg", "png"])
-    user_input = st.chat_input("Apni bimari ya symptoms batayein (e.g. Bukhar aur sar dard)...")
-
-    if user_input:
-        # User Message
-        st.session_state.history.append(("user", user_input))
-        with st.chat_message("user"):
-            st.markdown(user_input)
-            
-        # Image Processing
-        img = Image.open(uploaded_file) if uploaded_file else None
-        
-        # AI Response
-        with st.spinner("Dr. AI report tayyar kar rahe hain..."):
-            advice = get_response(user_input, img)
-        
-        # Assistant Message
-        st.session_state.history.append(("assistant", advice))
-        with st.chat_message("assistant"):
-            st.markdown(advice)
-            
-        # Store for PDF
-        st.session_state.last_query = user_input
-        st.session_state.last_advice = advice
-        st.rerun() # Refresh to show button
-
-# --- DOWNLOAD BUTTON SECTION ---
-# Ye button hamesha latest advice ke baad dikhega
-if st.session_state.last_advice:
-    st.markdown("### 📥 Download Prescription")
-    st.info("Download your official AI Medical Report below:")
-    
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        pdf_bytes = create_structured_prescription(st.session_state.last_query, st.session_state.last_advice)
-        
-        st.download_button(
-            label="📄 CLICK HERE TO DOWNLOAD PDF REPORT",
-            data=pdf_bytes,
-            file_name=f"Prescription_{p_name}.pdf",
-            mime="application/pdf",
-        )
+# >>>> PAGE: SETTINGS <<<<
+if selected == "Settings":
+    st.header("👤 Profile Settings")
+    with st.form("p_form"):
+        name = st.text_input("Name", st.session_state.user_data['name'])
+        if st.form_submit_button("Save"):
+            st.session_state.user_data['name'] = name
+            st.success("Saved!")
