@@ -32,12 +32,6 @@ st.markdown("""
         font-weight: bold;
         margin-bottom: 10px;
     }
-    /* Urdu Font Support (Optional) */
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu&display=swap');
-    
-    .stMarkdown {
-        font-family: 'Arial', sans-serif;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -93,7 +87,8 @@ def create_pdf(chat_history):
     return pdf.output(dest='S').encode('latin-1')
 
 def generate_doctor_email(chat_history):
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # Model Updated to specific version to avoid 404
+    model = genai.GenerativeModel('gemini-1.5-flash-001')
     history_text = "\n".join([f"{m['role']}: {m['content']}" for m in chat_history])
     prompt = f"""
     Write a formal appointment request email to a Doctor in Pakistan based on this chat.
@@ -106,20 +101,20 @@ def generate_doctor_email(chat_history):
 # --- 4. CORE INTELLIGENCE (PAKISTAN CONTEXT) ---
 
 def process_input(prompt, image=None):
-    # Emergency Check (Pakistan Context)
+    # Emergency Check
     if prompt:
         emergency_keywords = ["chest pain", "heart attack", "cant breathe", "saans", "khoon", "bleeding", "dengue", "accident"]
         if any(word in prompt.lower() for word in emergency_keywords):
-            return "🚨 **EMERGENCY ALERT:** Yeh serious lag raha hai. AI ko chorein aur **1122** par call karein ya foran kisi qareebi **Sarkari/Private Hospital** ki Emergency mein jayein."
+            return "🚨 **EMERGENCY ALERT:** Yeh serious lag raha hai. AI ko chorein aur **1122** par call karein ya foran Hospital Emergency mein jayein."
 
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # FIX: Using 'gemini-1.5-flash-001' instead of generic tag to prevent 404
+    model = genai.GenerativeModel('gemini-1.5-flash-001')
     
-    # SYSTEM PROMPT FOR PAKISTAN
     system_instruction = """
     You are a polite AI Health Assistant for Pakistan.
-    1. Language: Use English mixed with simple Roman Urdu for clarity (e.g., "Take medicine pani ke sath").
-    2. Medicines: Recommend common Pakistani brands (Panadol for fever, Brufen for pain, Gravinate for nausea, ORS for dehydration).
-    3. Warning: Dengue, Malaria, and Typhoid are common here. If symptoms match, suggest a Blood Test (CBC).
+    1. Language: Use English mixed with simple Roman Urdu (e.g., "Take medicine pani ke sath").
+    2. Medicines: Recommend common Pakistani brands (Panadol, Brufen, Gravinate, ORS).
+    3. Warning: If high fever, suggest CBC Test for Dengue/Malaria.
     4. Disclaimer: Always say "Please Doctor se check karwayein".
     """
     content = [system_instruction]
@@ -139,10 +134,10 @@ def process_input(prompt, image=None):
 
 # A. SIDEBAR
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/206/206856.png", width=60) # Pakistan Flag Icon Style
+    st.image("https://cdn-icons-png.flaticon.com/512/206/206856.png", width=60)
     st.title("Sehat Sahulat")
 
-    # --- Feature 1: Health Calculator ---
+    # BMI Calculator
     with st.expander("⚖️ BMI Calculator (Sehat Check)", expanded=False):
         weight = st.number_input("Wazan (Weight kg)", min_value=10, max_value=200, value=70)
         height = st.number_input("Qad (Height cm)", min_value=50, max_value=250, value=170)
@@ -156,16 +151,14 @@ with st.sidebar:
             st.markdown(f"### BMI: :{color}[{bmi}]")
             st.markdown(f"**Status: {status}**")
 
-    # --- Feature 2: Emergency Numbers (Pakistan) ---
+    # Emergency Numbers
     with st.expander("🚑 Emergency Numbers", expanded=True):
-        st.error("📞 **1122**: Rescue & Ambulance (All Pakistan)")
-        st.warning("📞 **15**: Police Assistance")
-        st.info("📞 **1166**: Sehat Tahaffuz / Polio Helpline")
+        st.error("📞 **1122**: Rescue & Ambulance")
+        st.warning("📞 **15**: Police")
+        st.info("📞 **1166**: Polio Helpline")
 
     st.markdown("---")
     
-    # Vision & Reports
-    st.markdown("### 📸 Tasveer Upload")
     uploaded_file = st.file_uploader("Nuskha (Prescription) ya Alamat", type=["jpg", "png", "jpeg"])
     
     if st.button("📄 Report Download Karein"):
@@ -173,9 +166,7 @@ with st.sidebar:
             pdf_bytes = create_pdf(st.session_state.messages)
             st.download_button("⬇️ Save PDF", pdf_bytes, "Sehat_Report.pdf", "application/pdf")
 
-    # Doctor Email
-    st.markdown("### 📧 Doctor Appointment")
-    if st.button("Email Likhwain"):
+    if st.button("📧 Email Likhwain"):
         if len(st.session_state.messages) > 2:
             email_draft = generate_doctor_email(st.session_state.messages)
             st.session_state['email_draft'] = email_draft
@@ -194,7 +185,6 @@ with st.sidebar:
 st.title("🏥 Pak AI Health Assistant")
 st.caption("AI Doctor • Roman Urdu Support • Pakistani Medicines")
 
-# Display Chat
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if "EMERGENCY" in message["content"]:
@@ -203,7 +193,7 @@ for message in st.session_state.messages:
              st.markdown(message["content"])
 
 # C. INPUT AREA
-prompt = st.chat_input("Apni tabiyat ke bare mein batayein... (e.g. 'Muje bukhar hai')")
+prompt = st.chat_input("Apni tabiyat ke bare mein batayein...")
 
 if prompt:
     # User Msg
@@ -211,7 +201,7 @@ if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Image
+    # Image Handling
     image_data = None
     if uploaded_file:
         image_data = Image.open(uploaded_file)
@@ -223,7 +213,7 @@ if prompt:
     with st.chat_message("assistant"):
         with st.spinner("AI soch raha hai..."):
             
-            # Onboarding
+            # Onboarding Phase
             if st.session_state.chat_phase == "onboarding":
                 response_text = f"Shukriya. Aapki details note kar li gayi hain: **{prompt}**.\n\nAb batayein aapko kya masla hai? (Aap Roman Urdu mein likh sakte hain)."
                 st.session_state.chat_phase = "consultation"
