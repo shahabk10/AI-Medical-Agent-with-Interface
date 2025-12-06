@@ -1,6 +1,7 @@
 streamlit
-google-generativeai
+google-generativeai>=0.7.2
 fpdf
 gTTS
 Pillow
+
 python-dotenv
