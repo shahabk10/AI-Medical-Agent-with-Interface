@@ -3,11 +3,10 @@ import google.generativeai as genai
 from fpdf import FPDF
 from gtts import gTTS
 from PIL import Image
-import io
-import os
 import tempfile
+import os
 
-# --- 1. PAGE CONFIGURATION (Medical Theme) ---
+# --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="UK AI Health Agent",
     page_icon="🏥",
@@ -15,13 +14,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for "Innovative" Look
+# Custom CSS for Medical Theme
 st.markdown("""
 <style>
     .stChatFloatingInputContainer {bottom: 20px;}
-    .user-avatar {background-color: #2E86C1;}
-    .assistant-avatar {background-color: #28B463;}
-    h1 {color: #2E4053;}
     .stButton>button {
         background-color: #28B463;
         color: white;
@@ -44,25 +40,27 @@ st.markdown("""
 
 # Load API Key from Streamlit Secrets
 try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-except:
-    st.error("⚠️ API Key missing! Please set GEMINI_API_KEY in Streamlit Secrets.")
+    if "GEMINI_API_KEY" in st.secrets:
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    else:
+        st.error("⚠️ API Key missing! Please set GEMINI_API_KEY in Streamlit Secrets.")
+except Exception as e:
+    st.error(f"Configuration Error: {e}")
 
-# Initialize Session State (Memory)
+# Initialize Session State
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {"role": "assistant", "content": "Hello! I am your AI Health Assistant (UK Edition).\nTo begin, please tell me your **Name** and **Age**."}
     ]
-if "user_details" not in st.session_state:
-    st.session_state.user_details = {}
 if "chat_phase" not in st.session_state:
-    st.session_state.chat_phase = "onboarding" # onboarding -> consultation
+    st.session_state.chat_phase = "onboarding" 
 
 # --- 3. HELPER FUNCTIONS ---
 
 def text_to_speech(text):
-    """Generates audio for the agent"""
+    """Generates audio for the agent response"""
     try:
+        # Generate generic filename to avoid clutter
         tts = gTTS(text=text, lang='en', tld='co.uk')
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
             tts.save(fp.name)
@@ -91,126 +89,151 @@ def create_pdf(chat_history):
     
     for msg in chat_history:
         role = "PATIENT" if msg["role"] == "user" else "AI DOCTOR"
-        content = msg["content"].encode('latin-1', 'replace').decode('latin-1')
+        # Handle audio message marker
+        content = msg["content"]
+        if "🎤" in content:
+            content = "[Voice Message Sent by Patient]"
+            
+        clean_content = content.encode('latin-1', 'replace').decode('latin-1')
         
         pdf.set_font('Arial', 'B', 10)
-        if role == "AI DOCTOR":
-            pdf.set_text_color(0, 100, 0) # Green
-        else:
-            pdf.set_text_color(0, 0, 0) # Black
-            
+        pdf.set_text_color(0, 100, 0) if role == "AI DOCTOR" else pdf.set_text_color(0, 0, 0)
         pdf.cell(0, 6, f"{role}:", 0, 1)
+        
         pdf.set_font('Arial', '', 10)
-        pdf.multi_cell(0, 6, content)
+        pdf.set_text_color(0)
+        pdf.multi_cell(0, 6, clean_content)
         pdf.ln(3)
         
     return pdf.output(dest='S').encode('latin-1')
 
-# --- 4. CORE LOGIC ---
+# --- 4. CORE INTELLIGENCE (UPDATED FOR AUDIO) ---
 
-def process_input(prompt, image=None):
-    # Emergency Check
-    emergency_keywords = ["chest pain", "heart attack","accident", "cant breathe", "can't breathe", "suicide", "bleeding"]
-    if any(word in prompt.lower() for word in emergency_keywords):
-        return "🚨 **EMERGENCY ALERT:** This sounds critical. Please STOP using this AI. **Call 999 or 1122** immediately or go to A&E."
+def process_input(prompt, image=None, audio_bytes=None):
+    """
+    Handles Text, Image, and Audio inputs using Gemini 1.5 Flash
+    """
+    
+    # Emergency Check (Only possible on text)
+    if prompt:
+        emergency_keywords = ["chest pain", "heart attack", "cant breathe", "can't breathe", "suicide", "bleeding"]
+        if any(word in prompt.lower() for word in emergency_keywords):
+            return "🚨 **EMERGENCY ALERT:** This sounds critical. Please STOP using this AI. **Call 999** immediately or go to A&E."
 
-    # Model Configuration
-    model = genai.GenerativeModel('gemini-1.5-flash') # Using 1.5 Flash for speed/cost
+    # Model Setup (Gemini 1.5 Flash supports Audio natively)
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
-    # Context prompt
-    system_prompt = "You are a polite internatonal AI Pharmacist. Keep answers short. Recommend OTC medicine if safe. Always advise seeing a GP."
+    # System Prompt
+    system_instruction = "You are a polite UK AI Pharmacist. Keep answers short. Recommend OTC medicine if safe. Always advise seeing a GP."
     
-    content = [system_prompt]
+    # Build Payload
+    content = [system_instruction]
+    
     if image:
         content.append(image)
         content.append("Analyze this image (symptom/prescription) and provide advice.")
-    content.append(f"User Query: {prompt}")
     
-    response = model.generate_content(content)
-    return response.text
+    if audio_bytes:
+        # Pass audio directly to Gemini
+        content.append({
+            "mime_type": "audio/wav",
+            "data": audio_bytes
+        })
+        content.append("Listen to the patient's voice query and respond appropriately.")
+
+    if prompt:
+        content.append(f"User Query: {prompt}")
+    
+    # Generate Response
+    try:
+        response = model.generate_content(content)
+        return response.text
+    except Exception as e:
+        return f"Error connecting to AI: {e}"
 
 # --- 5. UI LAYOUT ---
 
-# A. Sidebar (Tools)
+# A. Sidebar
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3063/3063176.png", width=100)
-    st.title("Patient Tools")
+    st.image("https://cdn-icons-png.flaticon.com/512/3063/3063176.png", width=80)
+    st.title("Tools")
     
     st.markdown("### 📸 Vision Analysis")
-    uploaded_file = st.file_uploader("Upload Prescription/Symptom", type=["jpg", "png", "jpeg"])
+    uploaded_file = st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"])
     
     st.markdown("---")
-    st.markdown("### 📄 Reports")
-    if st.button("Generate PDF Report"):
+    if st.button("📄 Download Report"):
         pdf_bytes = create_pdf(st.session_state.messages)
-        st.download_button(
-            label="⬇️ Download PDF",
-            data=pdf_bytes,
-            file_name="Medical_Report.pdf",
-            mime="application/pdf"
-        )
+        st.download_button("Click to Save PDF", pdf_bytes, "Medical_Report.pdf", "application/pdf")
     
     st.markdown("---")
-    if st.button("Clear Consultation"):
+    if st.button("🔄 Reset Chat"):
         st.session_state.messages = []
+        st.session_state.chat_phase = "onboarding"
         st.rerun()
 
-# B. Main Chat Interface
-st.title("🏥 AI Health Assistant ")
+# B. Main Chat
+st.title("🏥 UK AI Health Assistant")
 st.caption("Voice-Enabled • Vision-Capable • NHS Guidelines")
 
-# Display Chat History
+# Display History
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# C. Input Area
-prompt = st.chat_input("Type your symptoms here...")
-audio_value = st.audio_input("Or speak to the agent") # NEW STREAMLIT FEATURE
+# C. Input Handling (Text OR Audio)
+prompt = st.chat_input("Type symptoms here...")
+audio_value = st.audio_input("Or speak to the agent") 
 
-# Logic to handle input
+# Logic Variables
 input_text = None
+input_audio_bytes = None
 
+# Detect Input Type
 if prompt:
     input_text = prompt
 elif audio_value:
-    # In a real deployed app, you'd send audio bytes to Gemini. 
-    # For this simpler version, we assume audio triggers a generic check or 
-    # you can integrate Whisper. For now, we will ask user to confirm text.
-    st.info("🎤 Voice received! (Voice-to-Text requires OpenAI Whisper key, strictly text for this demo mode).")
-    # To keep it working without paid keys, we rely on Text or Image mainly.
+    input_audio_bytes = audio_value.getvalue() # Convert audio to bytes for Gemini
+    input_text = "🎤 [Voice Message Sent]"
 
-if input_text:
-    # 1. User Message Display
+# Process if Input Exists
+if input_text or input_audio_bytes:
+    
+    # 1. Display User Message
     st.session_state.messages.append({"role": "user", "content": input_text})
     with st.chat_message("user"):
         st.markdown(input_text)
+        if input_audio_bytes:
+            st.audio(audio_value) # Play back user's voice
 
-    # 2. Logic processing
+    # 2. Handle Image
     image_data = None
     if uploaded_file:
         image_data = Image.open(uploaded_file)
-        st.toast("Image attached to analysis", icon="📸")
+        st.toast("Image attached for analysis", icon="📸")
 
-    # Phase Check
-    if st.session_state.chat_phase == "onboarding":
-        response_text = f"Thank you. I have noted your details: '{input_text}'.\n\nHow can I help you today? (Describe symptoms or upload a prescription)"
-        st.session_state.chat_phase = "consultation"
-    else:
-        with st.spinner("Analyzing symptoms & checking pharmacy database..."):
-            response_text = process_input(input_text, image_data)
-
-    # 3. AI Response Display
+    # 3. AI Processing
     with st.chat_message("assistant"):
-        # Check for Emergency
-        if "EMERGENCY" in response_text:
-            st.markdown(f'<div class="warning-box">{response_text}</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(response_text)
+        with st.spinner("Consulting AI Pharmacist..."):
             
-            # Audio Output
-            audio_file = text_to_speech(response_text)
-            if audio_file:
-                st.audio(audio_file, format="audio/mp3")
+            # Check phase for Onboarding (Name/Age) ONLY if using Text
+            if st.session_state.chat_phase == "onboarding" and not input_audio_bytes:
+                response_text = f"Thank you. Details noted: '{input_text}'.\n\nHow can I help you today? (Describe symptoms or upload a prescription)"
+                st.session_state.chat_phase = "consultation"
+            else:
+                # Full AI Call (Text + Audio + Image)
+                response_text = process_input(prompt, image_data, input_audio_bytes)
 
+            # Display Response
+            if "EMERGENCY" in response_text:
+                st.markdown(f'<div class="warning-box">{response_text}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(response_text)
+                
+                # Generate & Play Audio Response
+                audio_file = text_to_speech(response_text)
+                if audio_file:
+                    st.audio(audio_file, format="audio/mp3", start_time=0)
+
+    # 4. Save AI Response to History
     st.session_state.messages.append({"role": "assistant", "content": response_text})
