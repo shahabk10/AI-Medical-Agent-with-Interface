@@ -76,7 +76,8 @@ def create_pdf(chat_history):
     pdf.set_font('Arial', '', 11)
     for msg in chat_history:
         role = "PATIENT" if msg["role"] == "user" else "AI DOCTOR"
-        content = msg["content"].encode('latin-1', 'replace').decode('latin-1')
+        # Fix encoding issues
+        content = str(msg["content"]).encode('latin-1', 'replace').decode('latin-1')
         pdf.set_font('Arial', 'B', 10)
         pdf.set_text_color(17, 87, 64) if role == "AI DOCTOR" else pdf.set_text_color(0, 0, 0)
         pdf.cell(0, 6, f"{role}:", 0, 1)
@@ -87,48 +88,79 @@ def create_pdf(chat_history):
     return pdf.output(dest='S').encode('latin-1')
 
 def generate_doctor_email(chat_history):
-    # Model Updated to specific version to avoid 404
-    model = genai.GenerativeModel('gemini-1.5-flash-001')
+    # Try Flash first, fallback to Pro
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+    except:
+        model = genai.GenerativeModel('gemini-pro')
+        
     history_text = "\n".join([f"{m['role']}: {m['content']}" for m in chat_history])
     prompt = f"""
     Write a formal appointment request email to a Doctor in Pakistan based on this chat.
     History: {history_text}
     Format: Subject, Dear Doctor, Body (Symptoms in English), Sincerely.
     """
-    response = model.generate_content(prompt)
-    return response.text
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except:
+        return "Email generation failed due to model error."
 
-# --- 4. CORE INTELLIGENCE (PAKISTAN CONTEXT) ---
+# --- 4. CORE INTELLIGENCE (ROBUST FIX) ---
 
 def process_input(prompt, image=None):
     # Emergency Check
     if prompt:
         emergency_keywords = ["chest pain", "heart attack", "cant breathe", "saans", "khoon", "bleeding", "dengue", "accident"]
         if any(word in prompt.lower() for word in emergency_keywords):
-            return "🚨 **EMERGENCY ALERT:** Yeh serious lag raha hai. AI ko chorein aur **1122** par call karein ya foran Hospital Emergency mein jayein."
+            return "🚨 **EMERGENCY ALERT:** Yeh serious lag raha hai. AI ko chorein aur **1122** par call karein."
 
-    # FIX: Using 'gemini-1.5-flash-001' instead of generic tag to prevent 404
-    model = genai.GenerativeModel('gemini-1.5-flash-001')
+    # --- SMART MODEL SELECTION ---
+    # Hum pehle 'Flash' try karenge, agar wo 404 dega to 'Pro' use karenge
+    target_model = 'gemini-1.5-flash'
     
+    # System Instructions
     system_instruction = """
     You are a polite AI Health Assistant for Pakistan.
-    1. Language: Use English mixed with simple Roman Urdu (e.g., "Take medicine pani ke sath").
-    2. Medicines: Recommend common Pakistani brands (Panadol, Brufen, Gravinate, ORS).
-    3. Warning: If high fever, suggest CBC Test for Dengue/Malaria.
-    4. Disclaimer: Always say "Please Doctor se check karwayein".
+    1. Language: English mixed with simple Roman Urdu.
+    2. Medicines: Suggest Panadol, Brufen, ORS, etc.
+    3. Disclaimer: Always say "Doctor se check karwayein".
     """
+    
     content = [system_instruction]
+    
     if image:
         content.append(image)
         content.append("Analyze this medical image/report and provide feedback.")
     if prompt:
         content.append(f"User Query: {prompt}")
-    
+
     try:
+        # Koshish 1: Latest Model
+        model = genai.GenerativeModel(target_model)
         response = model.generate_content(content)
         return response.text
+        
     except Exception as e:
-        return f"System Error: {e}"
+        # Agar 404 ya koi error aaya, to ye block chalega
+        error_msg = str(e)
+        if "404" in error_msg or "not found" in error_msg:
+            try:
+                # Koshish 2: Old Reliable Model (Fallback)
+                fallback_model = 'gemini-pro'
+                # Note: gemini-pro images support nahi karta, isliye agar image hai to warning denge
+                if image:
+                    return "⚠️ Error: Aapka system purane model par chal raha hai jo Images support nahi karta. Please sirf Text use karein."
+                
+                model = genai.GenerativeModel(fallback_model)
+                # Fallback mein system instruction direct prompt mein add karte hain
+                full_prompt = system_instruction + "\n\n" + prompt
+                response = model.generate_content(full_prompt)
+                return response.text
+            except Exception as e2:
+                return f"System Critical Error: {e2}"
+        else:
+            return f"Error: {e}"
 
 # --- 5. UI LAYOUT ---
 
@@ -137,53 +169,41 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/206/206856.png", width=60)
     st.title("Sehat Sahulat")
 
-    # BMI Calculator
-    with st.expander("⚖️ BMI Calculator (Sehat Check)", expanded=False):
-        weight = st.number_input("Wazan (Weight kg)", min_value=10, max_value=200, value=70)
-        height = st.number_input("Qad (Height cm)", min_value=50, max_value=250, value=170)
-        if st.button("Calculate Karein"):
-            height_m = height / 100
-            bmi = round(weight / (height_m ** 2), 1)
-            if bmi < 18.5: status, color = "Kamzor (Underweight)", "orange"
-            elif 18.5 <= bmi < 24.9: status, color = "Fit (Healthy)", "green"
-            elif 25 <= bmi < 29.9: status, color = "Motaapa (Overweight)", "orange"
-            else: status, color = "Boht Motaapa (Obese)", "red"
-            st.markdown(f"### BMI: :{color}[{bmi}]")
-            st.markdown(f"**Status: {status}**")
+    with st.expander("⚖️ BMI Calculator", expanded=False):
+        weight = st.number_input("Wazan (kg)", 10, 200, 70)
+        height = st.number_input("Qad (cm)", 50, 250, 170)
+        if st.button("Calculate"):
+            bmi = round(weight / ((height/100)**2), 1)
+            st.write(f"BMI: {bmi}")
 
-    # Emergency Numbers
-    with st.expander("🚑 Emergency Numbers", expanded=True):
-        st.error("📞 **1122**: Rescue & Ambulance")
+    with st.expander("🚑 Emergency", expanded=True):
+        st.error("📞 **1122**: Rescue")
         st.warning("📞 **15**: Police")
-        st.info("📞 **1166**: Polio Helpline")
 
     st.markdown("---")
+    uploaded_file = st.file_uploader("Nuskha (Image)", type=["jpg", "png", "jpeg"])
     
-    uploaded_file = st.file_uploader("Nuskha (Prescription) ya Alamat", type=["jpg", "png", "jpeg"])
-    
-    if st.button("📄 Report Download Karein"):
+    if st.button("📄 PDF Download"):
         if len(st.session_state.messages) > 1:
             pdf_bytes = create_pdf(st.session_state.messages)
             st.download_button("⬇️ Save PDF", pdf_bytes, "Sehat_Report.pdf", "application/pdf")
 
-    if st.button("📧 Email Likhwain"):
+    if st.button("📧 Email Draft"):
         if len(st.session_state.messages) > 2:
-            email_draft = generate_doctor_email(st.session_state.messages)
-            st.session_state['email_draft'] = email_draft
+            st.session_state['email_draft'] = generate_doctor_email(st.session_state.messages)
             
     if 'email_draft' in st.session_state:
-        st.text_area("Email Copy Karein:", value=st.session_state['email_draft'], height=150)
+        st.text_area("Email:", value=st.session_state['email_draft'], height=150)
 
     st.markdown("---")
-    if st.button("🔄 Nayi Chat Shuru Karein"):
+    if st.button("🔄 Reset Chat"):
         st.session_state.messages = []
         st.session_state.chat_phase = "onboarding"
-        if 'email_draft' in st.session_state: del st.session_state['email_draft']
         st.rerun()
 
-# B. MAIN CHAT AREA
+# B. MAIN CHAT
 st.title("🏥 Pak AI Health Assistant")
-st.caption("AI Doctor • Roman Urdu Support • Pakistani Medicines")
+st.caption("Roman Urdu Support • Pakistan Edition")
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -192,39 +212,32 @@ for message in st.session_state.messages:
         else:
              st.markdown(message["content"])
 
-# C. INPUT AREA
-prompt = st.chat_input("Apni tabiyat ke bare mein batayein...")
+# C. INPUT
+prompt = st.chat_input("Tabiyat kaisi hai?")
 
 if prompt:
-    # User Msg
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Image Handling
     image_data = None
     if uploaded_file:
         image_data = Image.open(uploaded_file)
         if "image_processed" not in st.session_state: 
-             st.toast("Tasveer upload ho gayi hai", icon="📸")
+             st.toast("Tasveer upload ho gayi", icon="📸")
              st.session_state.image_processed = True
 
-    # AI Processing
     with st.chat_message("assistant"):
         with st.spinner("AI soch raha hai..."):
-            
-            # Onboarding Phase
             if st.session_state.chat_phase == "onboarding":
-                response_text = f"Shukriya. Aapki details note kar li gayi hain: **{prompt}**.\n\nAb batayein aapko kya masla hai? (Aap Roman Urdu mein likh sakte hain)."
+                response_text = f"Shukriya. Details note kar li gayi hain: **{prompt}**.\n\nAb batayein kya masla hai?"
                 st.session_state.chat_phase = "consultation"
             else:
                 response_text = process_input(prompt, image_data)
 
-            # Display
             if "EMERGENCY" in response_text:
                 st.markdown(f'<div class="warning-box">{response_text}</div>', unsafe_allow_html=True)
             else:
                 st.markdown(response_text)
 
-    # Save
     st.session_state.messages.append({"role": "assistant", "content": response_text})
