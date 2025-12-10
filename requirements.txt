@@ -1,6 +1,1 @@
-streamlit
-groq
-fpdf
-streamlit-option-menu
-plotly
-pillow
+pip install streamlit google-genai fpdf gtts pillow streamlit-folium folium streamlit-lottie requests
